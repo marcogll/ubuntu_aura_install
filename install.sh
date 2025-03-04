@@ -1,121 +1,188 @@
 #!/bin/bash
-# 🔧 Script de instalación automatizada para Ubuntu 24.04/24.10
-# Desarrollado por Ing. Marco Gallegos
 
-# === Definición de Colores ANSI ===
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'  # Sin Color
+# Definir el archivo de log
+log_file="install_log.txt"
+failed_packages=""
 
-# === Variables Globales para Progreso ===
-TOTAL_STEPS=9
-CURRENT_STEP=0
-
-# === Función para Actualizar la Barra de Progreso General ===
-update_progress() {
-    local progress=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
-    local total=50
-    local filled=$(( progress * total / 100 ))
-    local empty=$(( total - filled ))
-    # Barra de progreso: [#####-----] 50%
-    printf "\r${BLUE}Progreso General: ["
-    for ((i=0; i<filled; i++)); do printf "#"; done
-    for ((i=0; i<empty; i++)); do printf "-"; done
-    printf "] %d%%${NC}" "$progress"
-    echo ""
+# Función para registrar mensajes en el log
+log_message() {
+    echo "$(date): $1" >> "$log_file"
 }
 
-# === Función para Mostrar Mensaje de Proceso Individual ===
-print_step() {
-    local msg="$1"
-    echo -e "${YELLOW}➡️  $msg...${NC}"
+# Función para instalar paquetes y registrar errores
+install_package() {
+    echo "Instalando $1..."
+    sudo apt install "$1" -y >> "$log_file" 2>&1
+    if [ $? -ne 0 ]; then
+        log_message "Error instalando $1"
+        failed_packages="$failed_packages $1"
+    fi
 }
 
-# === Función de Logging Verboso con Timestamp ===
-log_msg() {
-    local status="$1"
-    shift
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $status: $*" >> /var/log/aura-install.log
+# Función para agregar PPA y registrar errores
+add_ppa() {
+    echo "Agregando PPA $1..."
+    sudo add-apt-repository "$1" -y >> "$log_file" 2>&1
+    if [ $? -ne 0 ]; then
+        log_message "Error agregando PPA $1"
+        failed_packages="$failed_packages PPA:$1"
+    fi
 }
 
-# === Función para Incrementar el Contador de Pasos y Actualizar la Barra ===
-next_step() {
-    CURRENT_STEP=$(( CURRENT_STEP + 1 ))
-    update_progress
-}
+# Iniciar el log
+echo "Iniciando instalación. Los logs se guardarán en $log_file."
+log_message "Inicio de la instalación"
 
-# === Validaciones Iniciales ===
-echo -e "${BLUE}🔍 Verificando versión de Ubuntu...${NC}"
-UBUNTU_VERSION=$(lsb_release -rs)
-if [[ "$UBUNTU_VERSION" != "24.04" && "$UBUNTU_VERSION" != "24.10" ]]; then
-    echo -e "${RED}❌ Error: Este script está diseñado para Ubuntu 24.04 o 24.10.${NC}"
-    log_msg "ERROR" "Versión no compatible: $UBUNTU_VERSION"
-    exit 1
-elif [[ "$UBUNTU_VERSION" == "24.10" ]]; then
-    echo -e "${YELLOW}⚠️  Advertencia: Ubuntu 24.10 detectado. Continuando la instalación...${NC}"
-    log_msg "INFO" "Ubuntu 24.10 detectado, se continúa la instalación"
+# Actualizar el sistema
+echo "Actualizando el sistema..."
+sudo apt update >> "$log_file" 2>&1 && sudo apt upgrade -y >> "$log_file" 2>&1 || log_message "Error actualizando el sistema"
+
+# Instalar Flatpak
+echo "Instalando Flatpak..."
+install_package flatpak
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >> "$log_file" 2>&1 || log_message "Error configurando Flatpak"
+
+# Instalar Curl y Wget
+install_package curl
+install_package wget
+
+# Instalar Homebrew
+echo "Instalando Homebrew..."
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$log_file" 2>&1
+echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> ~/.bashrc
+source ~/.bashrc
+
+# Instalar GCC con Homebrew
+echo "Instalando GCC con Homebrew..."
+brew install gcc >> "$log_file" 2>&1 || log_message "Error instalando GCC con Homebrew"
+
+# Instalar Fzf
+install_package fzf
+
+# Instalar Zsh
+install_package zsh
+
+# Instalar Oh My Posh
+echo "Instalando Oh My Posh..."
+brew install jandedobbeleer/oh-my-posh/oh-my-posh >> "$log_file" 2>&1 || log_message "Error instalando Oh My Posh"
+echo "Descargando tema para Oh My Posh..."
+mkdir -p ~/.config/oh-my-posh
+wget https://github.com/JanDeDobbeleer/oh-my-posh/raw/main/themes/catppuccin.omp.json -O ~/.config/oh-my-posh/catppuccin.omp.json >> "$log_file" 2>&1 || log_message "Error descargando tema Oh My Posh"
+echo "Instalando fuente Meslo..."
+oh-my-posh font install meslo >> "$log_file" 2>&1 || log_message "Error instalando fuente Meslo"
+
+# Instalar Oh My Zsh
+echo "Instalando Oh My Zsh..."
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended >> "$log_file" 2>&1 || log_message "Error instalando Oh My Zsh"
+
+# Configurar Oh My Posh en .zshrc
+echo "Configurando Oh My Posh en .zshrc..."
+echo 'eval "$(oh-my-posh init zsh --config ~/.config/oh-my-posh/catppuccin.omp.json)"' >> ~/.zshrc
+
+# Instalar Inkscape
+install_package inkscape
+
+# Asegurar instalación de Ubuntu Software (Gnome Store)
+install_package gnome-software
+
+# Instalar Gnome Sushi
+install_package gnome-sushi
+
+# Instalar Docker
+echo "Instalando Docker..."
+install_package docker.io
+echo "Añadiendo usuario al grupo Docker..."
+sudo usermod -aG docker $USER >> "$log_file" 2>&1 || log_message "Error añadiendo usuario al grupo Docker"
+
+# Instalar Lazydocker
+echo "Instalando Lazydocker..."
+brew install jesseduffield/lazydocker/lazydocker >> "$log_file" 2>&1 || log_message "Error instalando Lazydocker"
+
+# Instalar TeamViewer
+echo "Instalando TeamViewer..."
+wget https://download.teamviewer.com/download/linux/teamviewer_amd64.deb -O teamviewer.deb >> "$log_file" 2>&1
+sudo dpkg -i teamviewer.deb >> "$log_file" 2>&1
+sudo apt install -f -y >> "$log_file" 2>&1
+rm teamviewer.deb
+
+# Instalar Google Chrome
+echo "Instalando Google Chrome..."
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O chrome.deb >> "$log_file" 2>&1
+sudo dpkg -i chrome.deb >> "$log_file" 2>&1
+sudo apt install -f -y >> "$log_file" 2>&1
+rm chrome.deb
+
+# Instalar Zapzap via Flatpak
+echo "Instalando Zapzap..."
+flatpak install flathub io.github.zapzap -y >> "$log_file" 2>&1 || log_message "Error instalando Zapzap"
+
+# Instalar Gimp
+install_package gimp
+
+# Intentar instalar Showtime
+echo "Intentando instalar Showtime..."
+sudo apt install showtime -y >> "$log_file" 2>&1 || echo "Showtime no encontrado, verifica manualmente."
+
+# Instalar tema WhiteSur GTK
+echo "Instalando tema WhiteSur GTK..."
+git clone https://github.com/vinceliuice/WhiteSur-gtk-theme.git >> "$log_file" 2>&1
+cd WhiteSur-gtk-theme
+./install.sh >> "$log_file" 2>&1
+cd ..
+rm -rf WhiteSur-gtk-theme
+
+# Instalar Catppuccin para Gnome Terminal
+echo "Instalando Catppuccin para Gnome Terminal..."
+git clone https://github.com/catppuccin/gnome-terminal.git >> "$log_file" 2>&1
+cd gnome-terminal
+./install.sh >> "$log_file" 2>&1
+cd ..
+rm -rf gnome-terminal
+
+# Instalar Python, Pip y Pipx
+install_package python3
+install_package python3-pip
+pip3 install pipx >> "$log_file" 2>&1 || log_message "Error instalando Pipx"
+pipx ensurepath >> "$log_file" 2>&1
+
+# Instalar VSCode
+echo "Instalando VSCode..."
+sudo apt install software-properties-common apt-transport-https wget -y >> "$log_file" 2>&1
+wget -q https://packages.microsoft.com/keys/microsoft.asc -O- | sudo apt-key add - >> "$log_file" 2>&1
+sudo add-apt-repository "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main" >> "$log_file" 2>&1
+sudo apt update >> "$log_file" 2>&1
+install_package code
+
+# Instalar Gnome Extensions Manager
+install_package gnome-shell-extensions
+
+# Instalar Grub Customizer
+add_ppa ppa:danielrichter2007/grub-customizer
+sudo apt update >> "$log_file" 2>&1
+install_package grub-customizer
+
+# Instalar OCRmyPDF
+install_package ocrmypdf
+
+# Instalar Speedtest-cli
+install_package speedtest-cli
+
+# Instalar Exfatprogs
+install_package exfatprogs
+
+# Instalar Gparted
+install_package gparted
+
+# Intentar instalar Btop
+echo "Intentando instalar Btop..."
+sudo apt install btop -y >> "$log_file" 2>&1 || echo "Btop no encontrado. Instálalo manualmente desde https://github.com/aristocratos/btop"
+
+# Mensaje final
+if [ -z "$failed_packages" ]; then
+    echo "Instalación completada sin errores."
+else
+    echo "Algunos paquetes fallaron: $failed_packages. Revisa el log en $log_file para más detalles."
 fi
-next_step
 
-echo -e "${BLUE}📡 Verificando conectividad a Internet...${NC}"
-if ! ping -c 1 google.com > /dev/null 2>&1; then
-    echo -e "${RED}❌ Error: No hay conexión a Internet.${NC}"
-    log_msg "ERROR" "Fallo en la conectividad a Internet"
-    exit 1
-fi
-next_step
-
-# === Configuraciones Previas ===
-echo -e "${BLUE}📁 Creando directorio base /home/auraInst/...${NC}"
-mkdir -p /home/auraInst/ && log_msg "INFO" "Directorio /home/auraInst/ creado"
-next_step
-
-echo -e "${BLUE}📜 Configurando log en /var/log/aura-install.log...${NC}"
-sudo touch /var/log/aura-install.log && sudo chown $USER:$USER /var/log/aura-install.log
-# Redirigir salida a log (stdout y stderr)
-exec > >(tee -a /var/log/aura-install.log) 2>&1
-next_step
-
-# === Actualización del Sistema ===
-print_step "Actualizando el sistema (apt update & upgrade)"
-sudo apt update -y && sudo apt upgrade -y
-log_msg "INFO" "Sistema actualizado"
-next_step
-
-# === Instalación de Paquetes Base ===
-print_step "Instalando paquetes esenciales (git, curl, wget, software-properties-common)"
-sudo apt install -y git curl wget software-properties-common apt-transport-https ca-certificates lsb-release gnupg
-log_msg "INFO" "Paquetes base instalados"
-next_step
-
-# === Limpieza del Escritorio ===
-print_step "Limpiando el escritorio y ocultando el icono 'Home'"
-rm -rf ~/Desktop/*
-gsettings set org.gnome.nautilus.desktop home-icon-visible false
-log_msg "INFO" "Escritorio limpio y home oculto"
-next_step
-
-# === Instalación de Google Chrome ===
-print_step "Instalando Google Chrome"
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
-sudo dpkg -i /tmp/chrome.deb
-sudo apt -f install -y
-rm /tmp/chrome.deb
-log_msg "INFO" "Google Chrome instalado"
-next_step
-
-# === Instalación de Zsh y Oh My Zsh ===
-print_step "Instalando Zsh y configurando Oh My Zsh (modo no interactivo)"
-sudo apt install -y zsh
-# Ejecutar el script de instalación de Oh My Zsh en modo no interactivo
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-log_msg "INFO" "Zsh y Oh My Zsh instalados"
-next_step
-
-# === Barra de Progreso Final y Resumen ===
-update_progress
-echo -e "${GREEN}✅ Instalación completada exitosamente.${NC}"
-echo -e "${GREEN}🔧 Desarrollado por Ing. Marco Gallegos | Agencia: Aura Dev | Más en: https://github.com/marcogll/ubuntu_aura_install${NC}"
-log_msg "INFO" "Instalación finalizada con éxito"
+log_message "Fin de la instalación"
+echo "Por favor, reinicia el sistema para aplicar todos los cambios (especialmente para Docker y zsh)."
